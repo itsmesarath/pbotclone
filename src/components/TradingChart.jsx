@@ -1,364 +1,399 @@
-import React, { useEffect, useRef } from 'react';
-import { createChart } from 'lightweight-charts';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTradingStore } from '../store/tradingStore';
+import {
+  loadTradingViewWidget,
+  mapIntervalToResolution,
+  resolveTradingSymbol
+} from '../services/tradingViewService';
 
-const TradingChart = () => {
-  const chartContainerRef = useRef(null);
-  const chartRef = useRef(null);
-  const candlestickSeriesRef = useRef(null);
-  const volumeSeriesRef = useRef(null);
-  const priceLinesRef = useRef([]);
+const TradingChart = ({
+  isMaximized = false,
+  onToggleMaximize = () => {},
+  onCollapseControls = () => {},
+  areControlsCollapsed = false,
+  restoreControls = () => {}
+}) => {
+  const containerId = useMemo(
+    () => `tv_chart_${Math.random().toString(36).slice(2, 11)}`,
+    []
+  );
+
+  const widgetRef = useRef(null);
   const chartReadyRef = useRef(false);
-  const isInitialLoadRef = useRef(true);
-  const lastCandleCountRef = useRef(0);
-  const lastSymbolRef = useRef('');
-  const lastIntervalRef = useRef('');
+  const keyLevelEntitiesRef = useRef([]);
+  const signalEntitiesRef = useRef([]);
 
-  const { candlestickData, keyLevels, currentSignal, symbol, interval } = useTradingStore();
+  const {
+    symbol,
+    interval,
+    keyLevels,
+    currentSignal,
+    candlestickData
+  } = useTradingStore();
 
-  useEffect(() => {
-    if (!chartContainerRef.current) {
-      console.log('⏳ Chart container ref not ready');
-      return;
+  const [isLoading, setIsLoading] = useState(true);
+  const [chartError, setChartError] = useState(null);
+
+  const cleanupEntities = useCallback((entitiesRef) => {
+    if (!chartReadyRef.current || !widgetRef.current) return;
+
+    try {
+      const chart = widgetRef.current.activeChart();
+      entitiesRef.current.forEach((entityId) => {
+        try {
+          chart.removeEntity(entityId);
+        } catch (err) {
+          // Ignore entity removal failures (entity might already be gone)
+        }
+      });
+    } catch (err) {
+      console.warn('Unable to cleanup TradingView entities', err);
     }
 
-    if (chartRef.current) {
-      console.log('⚠️ Chart already exists, skipping creation');
-      return;
-    }
-
-    console.log('📊 Creating chart...');
-    // Create chart
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        background: { color: '#1e222d' },
-        textColor: '#d1d4dc',
-      },
-      grid: {
-        vertLines: { color: '#2a2e39' },
-        horzLines: { color: '#2a2e39' },
-      },
-      width: chartContainerRef.current.clientWidth,
-      height: 600,
-      timeScale: {
-        timeVisible: true,
-        secondsVisible: false,
-      },
-      crosshair: {
-        mode: 1,
-      },
-    });
-
-    chartRef.current = chart;
-    console.log('✅ Chart created successfully');
-
-    // Add candlestick series
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderVisible: false,
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
-    });
-    candlestickSeriesRef.current = candlestickSeries;
-    console.log('✅ Candlestick series added');
-
-    // Add volume series
-    const volumeSeries = chart.addHistogramSeries({
-      color: '#26a69a',
-      priceFormat: {
-        type: 'volume',
-      },
-      priceScaleId: '',
-      scaleMargins: {
-        top: 0.8,
-        bottom: 0,
-      },
-    });
-    volumeSeriesRef.current = volumeSeries;
-    chartReadyRef.current = true;
-    console.log('✅ Volume series added - CHART READY!');
-
-    // Handle resize
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-        });
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      console.log('🧹 Cleaning up chart...');
-      chartReadyRef.current = false;
-      window.removeEventListener('resize', handleResize);
-      if (chartRef.current) {
-        chartRef.current.remove();
-        chartRef.current = null;
-      }
-      candlestickSeriesRef.current = null;
-      volumeSeriesRef.current = null;
-    };
+    entitiesRef.current = [];
   }, []);
 
-  // Update candlestick data
-  useEffect(() => {
-    // Check if symbol or interval changed
-    if (symbol !== lastSymbolRef.current || interval !== lastIntervalRef.current) {
-      console.log('🔄 Symbol/Interval changed, resetting chart...');
-      isInitialLoadRef.current = true;
-      lastCandleCountRef.current = 0;
-      lastSymbolRef.current = symbol;
-      lastIntervalRef.current = interval;
-    }
+  const applyKeyLevels = useCallback(() => {
+    if (!chartReadyRef.current || !widgetRef.current) return;
 
-    console.log('📈 Candlestick data update triggered:', {
-      chartReady: chartReadyRef.current,
-      seriesReady: !!candlestickSeriesRef.current,
-      volumeSeriesReady: !!volumeSeriesRef.current,
-      dataType: typeof candlestickData,
-      isArray: Array.isArray(candlestickData),
-      dataLength: candlestickData?.length
-    });
+    cleanupEntities(keyLevelEntitiesRef);
 
-    if (!chartReadyRef.current || !candlestickSeriesRef.current || !volumeSeriesRef.current) {
-      console.log('⏳ Chart not ready yet, will retry when ready');
-      return;
-    }
-
-    // Safety check: ensure candlestickData is an array
-    if (!Array.isArray(candlestickData)) {
-      console.error('❌ candlestickData is not an array!', typeof candlestickData, candlestickData);
-      return;
-    }
-
-    if (!candlestickData.length) {
-      console.log('⏳ No data yet, waiting...');
+    if (!Array.isArray(keyLevels) || keyLevels.length === 0) {
       return;
     }
 
     try {
-      console.log('🎨 Updating chart with', candlestickData.length, 'candles');
-      console.log('📊 Sample candle:', candlestickData[0]);
-      
-      // Filter out any undefined or invalid candles
-      const validCandles = candlestickData.filter(candle => 
-        candle && 
-        typeof candle.time === 'number' && 
-        typeof candle.open === 'number' &&
-        typeof candle.high === 'number' &&
-        typeof candle.low === 'number' &&
-        typeof candle.close === 'number' &&
-        typeof candle.volume === 'number'
-      );
+      const chart = widgetRef.current.activeChart();
 
-      if (validCandles.length === 0) {
-        console.log('⚠️ No valid candles found!');
-        return;
-      }
+      keyLevels.forEach((level) => {
+        if (!level || typeof level.price !== 'number') return;
 
-      if (validCandles.length < candlestickData.length) {
-        console.warn('⚠️ Filtered out', candlestickData.length - validCandles.length, 'invalid candles');
-      }
+        const color =
+          level.type === 'POC'
+            ? '#ffeb3b'
+            : level.type === 'HVN'
+            ? '#4caf50'
+            : level.type === 'LVN'
+            ? '#f44336'
+            : '#9e9e9e';
 
-      console.log('📊 Setting', validCandles.length, 'valid candles to chart');
-      
-      // On initial load, use setData() and fit content
-      if (isInitialLoadRef.current) {
-        candlestickSeriesRef.current.setData(validCandles);
-        
-        // Update volume data
-        const volumeData = validCandles.map(candle => ({
-          time: candle.time,
-          value: candle.volume,
-          color: candle.close >= candle.open ? '#26a69a80' : '#ef535080',
-        }));
-        volumeSeriesRef.current.setData(volumeData);
-        
-        // Fit content only on initial load
-        if (chartRef.current) {
-          chartRef.current.timeScale().fitContent();
-          console.log('✅ Initial chart load complete with fitContent');
+        const entityId = chart.createShape({ price: level.price }, {
+          shape: 'horizontal_line',
+          lock: true,
+          disableSelection: true,
+          text: `${level.type || 'LEVEL'} ${level.price.toFixed(2)}`,
+          color,
+          linewidth: 2
+        });
+
+        if (entityId) {
+          keyLevelEntitiesRef.current.push(entityId);
         }
-        
-        isInitialLoadRef.current = false;
-        lastCandleCountRef.current = validCandles.length;
-      } else {
-        // On subsequent updates, only update the last candle (or add new ones)
-        const previousCount = lastCandleCountRef.current;
-        
-        if (validCandles.length > previousCount) {
-          // New candles added
-          console.log('🎆 New candles detected, adding', validCandles.length - previousCount);
-          for (let i = previousCount; i < validCandles.length; i++) {
-            candlestickSeriesRef.current.update(validCandles[i]);
-            
-            const candle = validCandles[i];
-            volumeSeriesRef.current.update({
-              time: candle.time,
-              value: candle.volume,
-              color: candle.close >= candle.open ? '#26a69a80' : '#ef535080',
-            });
-          }
-          lastCandleCountRef.current = validCandles.length;
-        } else if (validCandles.length === previousCount) {
-          // Same count, just update the last candle
-          const lastCandle = validCandles[validCandles.length - 1];
-          console.log('🔄 Updating last candle');
-          candlestickSeriesRef.current.update(lastCandle);
-          
-          volumeSeriesRef.current.update({
-            time: lastCandle.time,
-            value: lastCandle.volume,
-            color: lastCandle.close >= lastCandle.open ? '#26a69a80' : '#ef535080',
-          });
-        } else {
-          // Length decreased (shouldn't happen, but handle it)
-          console.log('⚠️ Candle count decreased, doing full refresh');
-          candlestickSeriesRef.current.setData(validCandles);
-          
-          const volumeData = validCandles.map(candle => ({
-            time: candle.time,
-            value: candle.volume,
-            color: candle.close >= candle.open ? '#26a69a80' : '#ef535080',
-          }));
-          volumeSeriesRef.current.setData(volumeData);
-          lastCandleCountRef.current = validCandles.length;
-        }
-        
-        console.log('✅ Chart updated without resetting view');
-      }
-    } catch (error) {
-      console.error('❌ Error updating chart data:', error);
-    }
-  }, [candlestickData]);
-
-  // Draw key levels
-  useEffect(() => {
-    if (!candlestickSeriesRef.current || !keyLevels.length) return;
-
-    // Remove old price lines
-    priceLinesRef.current.forEach(line => {
-      try {
-        candlestickSeriesRef.current?.removePriceLine(line);
-      } catch (e) {
-        // Line might already be removed
-      }
-    });
-    priceLinesRef.current = [];
-
-    // Remove old markers
-    candlestickSeriesRef.current?.setMarkers([]);
-
-    // Add price lines for key levels
-    keyLevels.forEach(level => {
-      const color = level.type === 'POC' ? '#ffeb3b' :
-                    level.type === 'HVN' ? '#4caf50' :
-                    level.type === 'LVN' ? '#f44336' : '#9e9e9e';
-
-      const priceLine = candlestickSeriesRef.current?.createPriceLine({
-        price: level.price,
-        color,
-        lineWidth: 2,
-        lineStyle: 2, // Dashed
-        axisLabelVisible: true,
-        title: level.type,
       });
-      
-      if (priceLine) {
-        priceLinesRef.current.push(priceLine);
-      }
-    });
-  }, [keyLevels]);
+    } catch (err) {
+      console.warn('Unable to plot key levels on TradingView chart', err);
+    }
+  }, [cleanupEntities, keyLevels]);
 
-  // Draw signal markers
-  useEffect(() => {
-    if (!candlestickSeriesRef.current || !currentSignal || !candlestickData.length) return;
+  const applySignalAnnotations = useCallback(() => {
+    if (!chartReadyRef.current || !widgetRef.current) return;
 
-    // Remove old price lines from previous signals
-    priceLinesRef.current.forEach(line => {
-      try {
-        candlestickSeriesRef.current?.removePriceLine(line);
-      } catch (e) {
-        // Line might already be removed
-      }
-    });
-    priceLinesRef.current = [];
+    cleanupEntities(signalEntitiesRef);
 
-    if (currentSignal.type === 'FLAT') {
-      // Clear markers for FLAT signal
-      candlestickSeriesRef.current?.setMarkers([]);
+    if (!currentSignal || currentSignal.type === 'FLAT') {
       return;
     }
 
-    const lastCandle = candlestickData[candlestickData.length - 1];
-    
-    const marker = {
-      time: lastCandle.time,
-      position: currentSignal.type === 'LONG' ? 'belowBar' : 'aboveBar',
-      color: currentSignal.type === 'LONG' ? '#26a69a' : '#ef5350',
-      shape: currentSignal.type === 'LONG' ? 'arrowUp' : 'arrowDown',
-      text: `${currentSignal.type} ${currentSignal.confidence}%`,
+    try {
+      const chart = widgetRef.current.activeChart();
+
+      const addHorizontalLine = (price, title, color) => {
+        if (typeof price !== 'number') return;
+
+        const entityId = chart.createShape({ price }, {
+          shape: 'horizontal_line',
+          lock: false,
+          disableSelection: false,
+          text: `${title}: ${price.toFixed(2)}`,
+          color,
+          linewidth: 2
+        });
+
+        if (entityId) {
+          signalEntitiesRef.current.push(entityId);
+        }
+      };
+
+      const sentimentColor =
+        currentSignal.type === 'LONG' ? '#26a69a' : '#ef5350';
+
+      const labelText = `Signal: ${currentSignal.type}${
+        currentSignal.confidence ? ` (${currentSignal.confidence}%)` : ''
+      }`;
+
+      const labelPrice = [
+        currentSignal.entry,
+        currentSignal.target,
+        currentSignal.stopLoss
+      ].find((price) => typeof price === 'number');
+
+      if (typeof labelPrice === 'number') {
+        const labelEntity = chart.createShape(
+          { price: labelPrice },
+          {
+            shape: 'text',
+            lock: true,
+            disableSelection: true,
+            color: sentimentColor,
+            text: labelText
+          }
+        );
+
+        if (labelEntity) {
+          signalEntitiesRef.current.push(labelEntity);
+        }
+      }
+
+      addHorizontalLine(currentSignal.entry, 'Entry', '#2196f3');
+      addHorizontalLine(currentSignal.stopLoss, 'Stop', '#f44336');
+      addHorizontalLine(currentSignal.target, 'Target', '#4caf50');
+
+      if (Array.isArray(candlestickData) && candlestickData.length > 0) {
+        const lastCandle = candlestickData[candlestickData.length - 1];
+        if (lastCandle && typeof lastCandle.close === 'number') {
+          const markerEntity = chart.createShape(
+            { price: lastCandle.close },
+            {
+              shape: currentSignal.type === 'LONG' ? 'arrow_up' : 'arrow_down',
+              color: sentimentColor,
+              lock: true,
+              disableSelection: true,
+              text: `${currentSignal.type} @ ${lastCandle.close.toFixed(2)}`
+            }
+          );
+
+          if (markerEntity) {
+            signalEntitiesRef.current.push(markerEntity);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Unable to plot AI signal on TradingView chart', err);
+    }
+  }, [candlestickData, cleanupEntities, currentSignal]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const initChart = async () => {
+      setIsLoading(true);
+      setChartError(null);
+
+      try {
+        const TradingView = await loadTradingViewWidget();
+        if (cancelled || !TradingView) return;
+
+        const tvSymbol = resolveTradingSymbol(symbol);
+        const resolution = mapIntervalToResolution(interval);
+
+        widgetRef.current = new TradingView.widget({
+          symbol: tvSymbol,
+          interval: resolution,
+          container_id: containerId,
+          autosize: true,
+          theme: 'dark',
+          style: '1',
+          timezone: 'Etc/UTC',
+          locale: 'en',
+          enable_publishing: false,
+          allow_symbol_change: false,
+          hide_side_toolbar: false,
+          withdateranges: true,
+          toolbar_bg: '#1e222d',
+          studies: ['RSI@tv-basicstudies', 'MACD@tv-basicstudies', 'Volume@tv-basicstudies'],
+          enabled_features: [
+            'move_logo_to_main_pane',
+            'items_favoriting',
+            'show_hide_button_in_legend',
+            'header_compare',
+            'header_symbol_search',
+            'header_interval_dialog_button',
+            'header_resolutions',
+            'header_indicators',
+            'header_fullscreen_button',
+            'header_settings',
+            'header_saveload',
+            'chart_property_page_trading'
+          ],
+          disabled_features: ['use_localstorage_for_settings'],
+          drawings_access: {
+            type: 'black',
+            tools: [
+              { name: 'Trend Line' },
+              { name: 'Trend Angle' },
+              { name: 'Fib Retracement' },
+              { name: 'Rectangle' },
+              { name: 'Ellipse' },
+              { name: 'Brush' },
+              { name: 'Price Range' },
+              { name: 'Long Position' },
+              { name: 'Short Position' }
+            ]
+          },
+          favorites: {
+            intervals: ['1', '5', '15', '60', '240', '1D', '1W'],
+            chartTypes: ['candles', 'heikinashi'],
+            drawingTools: ['Trend Line', 'Fib Retracement', 'Price Range', 'Brush']
+          },
+          time_frames: [
+            { text: '1m', resolution: '1', description: 'Scalp' },
+            { text: '5m', resolution: '5', description: 'Intra-day' },
+            { text: '15m', resolution: '15', description: 'Momentum' },
+            { text: '1h', resolution: '60', description: 'Intraday Swing' },
+            { text: '4h', resolution: '240', description: 'Swing' },
+            { text: '1D', resolution: '1D', description: 'Daily' },
+            { text: '1W', resolution: '1W', description: 'Weekly' }
+          ],
+          overrides: {
+            'paneProperties.background': '#1e222d',
+            'paneProperties.vertGridProperties.color': '#2a2e39',
+            'paneProperties.horzGridProperties.color': '#2a2e39',
+            'scalesProperties.textColor': '#d1d4dc'
+          },
+          studies_overrides: {
+            'volume.volume.color.0': '#ef4444',
+            'volume.volume.color.1': '#22c55e',
+            'volume.volume.transparency': 70
+          },
+          loading_screen: { backgroundColor: '#1e222d', foregroundColor: '#2962ff' }
+        });
+
+        widgetRef.current.onChartReady(() => {
+          if (cancelled) return;
+
+          chartReadyRef.current = true;
+          setIsLoading(false);
+
+          try {
+            const chart = widgetRef.current.activeChart();
+            chart.createStudy('Moving Average', false, false, [50]);
+            chart.createStudy('Moving Average', false, false, [200]);
+          } catch (err) {
+            console.warn('Unable to configure default TradingView moving averages', err);
+          }
+
+          applyKeyLevels();
+          applySignalAnnotations();
+        });
+      } catch (err) {
+        console.error('Failed to initialise TradingView widget', err);
+        if (!cancelled) {
+          setChartError(
+            'Unable to load TradingView charting assets. Please ensure you have an active internet connection or provide the local Charting Library bundle.'
+          );
+          setIsLoading(false);
+        }
+      }
     };
 
-    candlestickSeriesRef.current.setMarkers([marker]);
+    initChart();
 
-    // Draw entry, stop loss, and target lines
-    if (currentSignal.entry) {
-      const entryLine = candlestickSeriesRef.current.createPriceLine({
-        price: currentSignal.entry,
-        color: '#2196f3',
-        lineWidth: 2,
-        lineStyle: 0,
-        axisLabelVisible: true,
-        title: 'Entry',
-      });
-      if (entryLine) priceLinesRef.current.push(entryLine);
-    }
+    return () => {
+      cancelled = true;
+      chartReadyRef.current = false;
+      cleanupEntities(keyLevelEntitiesRef);
+      cleanupEntities(signalEntitiesRef);
+      if (widgetRef.current && typeof widgetRef.current.remove === 'function') {
+        widgetRef.current.remove();
+      }
+      widgetRef.current = null;
+    };
+  }, [applyKeyLevels, applySignalAnnotations, cleanupEntities, containerId]);
 
-    if (currentSignal.stopLoss) {
-      const stopLine = candlestickSeriesRef.current.createPriceLine({
-        price: currentSignal.stopLoss,
-        color: '#f44336',
-        lineWidth: 2,
-        lineStyle: 0,
-        axisLabelVisible: true,
-        title: 'Stop Loss',
-      });
-      if (stopLine) priceLinesRef.current.push(stopLine);
-    }
+  useEffect(() => {
+    if (!chartReadyRef.current || !widgetRef.current) return;
 
-    if (currentSignal.target) {
-      const targetLine = candlestickSeriesRef.current.createPriceLine({
-        price: currentSignal.target,
-        color: '#4caf50',
-        lineWidth: 2,
-        lineStyle: 0,
-        axisLabelVisible: true,
-        title: 'Target',
+    try {
+      const tvSymbol = resolveTradingSymbol(symbol);
+      widgetRef.current.activeChart().setSymbol(tvSymbol, () => {
+        applyKeyLevels();
+        applySignalAnnotations();
       });
-      if (targetLine) priceLinesRef.current.push(targetLine);
+    } catch (err) {
+      console.warn('Failed to update TradingView symbol', err);
     }
-  }, [currentSignal, candlestickData]);
+  }, [applyKeyLevels, applySignalAnnotations, symbol]);
+
+  useEffect(() => {
+    if (!chartReadyRef.current || !widgetRef.current) return;
+
+    try {
+      const resolution = mapIntervalToResolution(interval);
+      widgetRef.current.activeChart().setResolution(resolution, () => {
+        applyKeyLevels();
+        applySignalAnnotations();
+      });
+    } catch (err) {
+      console.warn('Failed to update TradingView resolution', err);
+    }
+  }, [applyKeyLevels, applySignalAnnotations, interval]);
+
+  useEffect(() => {
+    applyKeyLevels();
+  }, [applyKeyLevels]);
+
+  useEffect(() => {
+    applySignalAnnotations();
+  }, [applySignalAnnotations]);
+
+  useEffect(() => {
+    if (chartReadyRef.current && widgetRef.current) {
+      try {
+        widgetRef.current.resize();
+      } catch (err) {
+        console.warn('Unable to resize TradingView widget', err);
+      }
+    }
+  }, [isMaximized]);
+
+  const chartHeight = isMaximized ? '80vh' : '600px';
 
   return (
-    <div className="bg-chart-bg rounded-lg p-4">
-      {/* Loading overlay */}
-      {candlestickData.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-90 rounded-lg z-10">
-          <div className="text-center">
-            <div className="animate-spin h-12 w-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-            <p className="text-gray-400">Loading market data...</p>
-          </div>
+    <div className={`relative bg-gray-800 rounded-lg border border-gray-700 ${isMaximized ? 'shadow-2xl' : ''}`}>
+      <div className="absolute top-3 right-3 z-30 flex flex-wrap gap-2">
+        <button
+          onClick={onToggleMaximize}
+          className="rounded-md bg-gray-900/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-gray-200 hover:bg-gray-900"
+        >
+          {isMaximized ? 'Exit Full View' : 'Maximise Chart'}
+        </button>
+        <button
+          onClick={areControlsCollapsed ? restoreControls : onCollapseControls}
+          className="rounded-md bg-gray-900/60 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-gray-200 hover:bg-gray-900"
+        >
+          {areControlsCollapsed ? 'Show Controls' : 'Hide Controls'}
+        </button>
+      </div>
+      {isLoading && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gray-900/80 rounded-lg">
+          <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+          <p className="mt-4 text-sm text-gray-300">Loading TradingView chart...</p>
         </div>
       )}
-      
-      {/* Chart container - always rendered */}
-      <div ref={chartContainerRef} style={{ minHeight: '600px' }} />
+
+      {chartError && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-lg bg-red-900/80 px-6 text-center">
+          <p className="text-sm font-semibold text-red-100">{chartError}</p>
+          <p className="mt-2 text-xs text-red-200">
+            Place the official TradingView Charting Library inside <code>public/charting_library</code> or retry once your network connection is restored so the CDN script can load.
+          </p>
+        </div>
+      )}
+
+      <div id={containerId} style={{ height: chartHeight }} />
     </div>
   );
 };
 
 export default TradingChart;
+
