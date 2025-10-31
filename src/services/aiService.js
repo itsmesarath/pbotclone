@@ -32,16 +32,17 @@ class AIService {
     // Determine which API to use based on model
     const isGroqModel = this.isGroqModel(model);
     const apiKey = isGroqModel ? this.groqApiKey : this.openRouterApiKey;
-    
+
     if (!apiKey) {
-      throw new Error(`${isGroqModel ? 'Groq' : 'OpenRouter'} API key not set`);
+      console.warn(`⚠️ ${isGroqModel ? 'Groq' : 'OpenRouter'} API key not set – using local analysis fallback`);
+      return this.generateLocalAnalysis(marketData, multiTimeframeData);
     }
 
     const prompt = this.buildAnalysisPrompt(marketData, multiTimeframeData);
 
     try {
       const apiBase = isGroqModel ? GROQ_API_BASE : OPENROUTER_API_BASE;
-      const headers = isGroqModel 
+      const headers = isGroqModel
         ? {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
@@ -49,7 +50,7 @@ class AIService {
         : {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer': window.location.origin,
+            'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : 'https://fabio-trading-bot',
             'X-Title': 'Fabio Trading Bot'
           };
 
@@ -76,8 +77,9 @@ class AIService {
       const analysis = JSON.parse(response.data.choices[0].message.content);
       return this.parseAnalysis(analysis);
     } catch (error) {
-      console.error('Error analyzing market:', error);
-      throw error;
+      console.error('Error analyzing market via API:', error);
+      console.warn('Falling back to local heuristic analysis.');
+      return this.generateLocalAnalysis(marketData, multiTimeframeData);
     }
   }
 
@@ -351,7 +353,10 @@ Provide detailed multi-timeframe reasoning for your analysis.`;
       marketState: {
         balanced: analysis.marketState.balanced ?? true,
         trend: analysis.marketState.trend || 'NEUTRAL',
-        confidence: analysis.marketState.confidence || 0
+        confidence: analysis.marketState.confidence || 0,
+        dailyBias: analysis.marketState.dailyBias || 'NEUTRAL',
+        fourHourBias: analysis.marketState.fourHourBias || 'NEUTRAL',
+        oneHourBias: analysis.marketState.oneHourBias || 'NEUTRAL'
       },
       keyLevels: (analysis.keyLevels || []).map(level => ({
         price: level.price,
@@ -361,6 +366,7 @@ Provide detailed multi-timeframe reasoning for your analysis.`;
       orderFlow: {
         cvd: analysis.orderFlow?.cvd || 0,
         aggression: analysis.orderFlow?.aggression || 'NEUTRAL',
+        volumeProfile: analysis.orderFlow?.volumeProfile || 'AVERAGE',
         imbalances: analysis.orderFlow?.imbalances || []
       },
       signal: {
@@ -370,9 +376,282 @@ Provide detailed multi-timeframe reasoning for your analysis.`;
         stopLoss: analysis.signal.stopLoss || 0,
         target: analysis.signal.target || 0,
         reasoning: analysis.signal.reasoning || '',
-        timestamp: new Date()
+        timestamp: analysis.signal.timestamp ? new Date(analysis.signal.timestamp) : new Date()
       }
     };
+  }
+
+  /**
+   * Generate a deterministic analysis when no AI provider is configured.
+   */
+  generateLocalAnalysis(marketData, multiTimeframeData = {}) {
+    const { candlesticks = [], volumeProfile = [], currentPrice = 0, symbol } = marketData || {};
+
+    if (!candlesticks.length) {
+      return {
+        marketState: {
+          balanced: true,
+          trend: 'NEUTRAL',
+          confidence: 0,
+          dailyBias: 'NEUTRAL',
+          fourHourBias: 'NEUTRAL',
+          oneHourBias: 'NEUTRAL'
+        },
+        keyLevels: [],
+        orderFlow: {
+          cvd: 0,
+          aggression: 'NEUTRAL',
+          volumeProfile: 'LOW',
+          imbalances: []
+        },
+        signal: {
+          type: 'FLAT',
+          confidence: 0,
+          entry: currentPrice,
+          stopLoss: currentPrice,
+          target: currentPrice,
+          reasoning: 'Not enough market data for analysis.',
+          timestamp: new Date()
+        }
+      };
+    }
+
+    const recentCandles = candlesticks.slice(-200);
+    const closes = recentCandles.map(c => c.close);
+    const fastSma = this.calculateSMA(closes, 20);
+    const slowSma = this.calculateSMA(closes, 50);
+    const atr = this.calculateATR(recentCandles, 14) || (currentPrice * 0.005);
+    const rsi = this.calculateRSI(closes, 14);
+    const trendBias = this.deriveTrendBias(recentCandles);
+    const price = currentPrice || closes[closes.length - 1];
+
+    const trendStrength = fastSma && slowSma ? (fastSma - slowSma) : 0;
+    const balanced = Math.abs(trendStrength) / (price || 1) < 0.0025;
+
+    let signalType = 'FLAT';
+    if (fastSma && slowSma) {
+      if (fastSma > slowSma * 1.001 && price > fastSma && rsi > 55) {
+        signalType = 'LONG';
+      } else if (fastSma < slowSma * 0.999 && price < fastSma && rsi < 45) {
+        signalType = 'SHORT';
+      }
+    }
+
+    const slope = this.calculateSlope(closes, 20);
+    let signalConfidence = 35;
+    if (signalType !== 'FLAT') {
+      const rsiDistance = signalType === 'LONG' ? rsi - 50 : 50 - rsi;
+      const slopeScore = Math.max(0, Math.min(20, Math.abs(slope) * 4000));
+      const trendScore = fastSma && slowSma ? Math.min(25, Math.abs(trendStrength) / (price || 1) * 8000) : 0;
+      const rsiScore = Math.max(0, Math.min(15, rsiDistance));
+      signalConfidence = Math.min(95, Math.max(20, 35 + slopeScore + trendScore + rsiScore));
+    } else {
+      signalConfidence = Math.max(10, 40 - (balanced ? 10 : 0));
+    }
+
+    const marketConfidence = Math.min(90, Math.max(10, 40 + Math.abs(trendStrength) / (price || 1) * 6000));
+
+    const stopLossDistance = atr || (price * 0.005);
+    const signal = {
+      type: signalType,
+      confidence: Math.round(signalConfidence),
+      entry: price,
+      stopLoss: signalType === 'LONG' ? price - stopLossDistance : signalType === 'SHORT' ? price + stopLossDistance : price,
+      target: signalType === 'LONG' ? price + stopLossDistance * 2 : signalType === 'SHORT' ? price - stopLossDistance * 2 : price,
+      reasoning: this.buildLocalReasoning({
+        signalType,
+        fastSma,
+        slowSma,
+        rsi,
+        atr,
+        slope,
+        trendBias,
+        price,
+        symbol: symbol || 'Unknown'
+      }),
+      timestamp: new Date()
+    };
+
+    const cvd = recentCandles.reduce((acc, candle) => acc + (candle.close - candle.open), 0);
+    const aggression = cvd > 0 ? 'BULL' : cvd < 0 ? 'BEAR' : 'NEUTRAL';
+    const avgVolume = recentCandles.reduce((sum, c) => sum + c.volume, 0) / recentCandles.length;
+    const lastVolume = recentCandles[recentCandles.length - 1]?.volume || 0;
+    const volumeProfileState = lastVolume > avgVolume * 1.5 ? 'HIGH' : lastVolume < avgVolume * 0.5 ? 'LOW' : 'AVERAGE';
+
+    const keyLevels = this.buildLocalKeyLevels(volumeProfile, price, multiTimeframeData);
+    const { dailyBias, fourHourBias, oneHourBias } = this.buildTimeframeBias(multiTimeframeData);
+
+    return {
+      marketState: {
+        balanced,
+        trend: trendBias,
+        confidence: Math.round(marketConfidence),
+        dailyBias,
+        fourHourBias,
+        oneHourBias
+      },
+      keyLevels,
+      orderFlow: {
+        cvd,
+        aggression,
+        volumeProfile: volumeProfileState,
+        imbalances: this.detectLocalImbalances(recentCandles)
+      },
+      signal
+    };
+  }
+
+  buildLocalReasoning({ signalType, fastSma, slowSma, rsi, atr, slope, trendBias, price, symbol }) {
+    const directionText = signalType === 'LONG'
+      ? 'Bullish bias detected: fast SMA above slow SMA and RSI supportive.'
+      : signalType === 'SHORT'
+        ? 'Bearish bias detected: fast SMA below slow SMA with weak RSI.'
+        : 'Mixed signals – market structure lacks clear confluence.';
+
+    const slopeText = slope > 0 ? 'Momentum is positive over the last 20 candles.'
+      : slope < 0 ? 'Momentum is negative over the last 20 candles.'
+      : 'Momentum is flat.';
+
+    return [
+      `Symbol ${symbol}: ${directionText}`,
+      `Current price ${price?.toFixed ? price.toFixed(2) : price}.`,
+      `20 SMA: ${fastSma ? fastSma.toFixed(2) : 'n/a'} vs 50 SMA: ${slowSma ? slowSma.toFixed(2) : 'n/a'}.`,
+      `RSI(14): ${Number.isFinite(rsi) ? rsi.toFixed(1) : 'n/a'}.`,
+      `ATR(14): ${Number.isFinite(atr) ? atr.toFixed(2) : 'n/a'} used for risk bands.`,
+      slopeText,
+      `Overall bias: ${trendBias}.`
+    ].join(' ');
+  }
+
+  buildLocalKeyLevels(volumeProfile, currentPrice, multiTimeframeData = {}) {
+    const levels = [];
+
+    if (Array.isArray(volumeProfile) && volumeProfile.length) {
+      const sorted = [...volumeProfile].sort((a, b) => b.volume - a.volume).slice(0, 5);
+      sorted.forEach(node => {
+        levels.push({
+          price: node.price,
+          type: node.type || 'VOLUME_NODE',
+          significance: node.type === 'POC' ? 'CRITICAL' : node.type === 'HVN' ? 'HIGH' : 'MEDIUM'
+        });
+      });
+    }
+
+    const appendLevel = (price, type, significance = 'HIGH') => {
+      if (!Number.isFinite(price)) return;
+      levels.push({ price, type, significance });
+    };
+
+    const { daily, fourHour, oneHour } = multiTimeframeData || {};
+    if (daily?.length) {
+      appendLevel(Math.max(...daily.map(c => c.high)), 'DAILY_HIGH', 'CRITICAL');
+      appendLevel(Math.min(...daily.map(c => c.low)), 'DAILY_LOW', 'CRITICAL');
+    }
+    if (fourHour?.length) {
+      appendLevel(Math.max(...fourHour.map(c => c.high)), '4H_HIGH');
+      appendLevel(Math.min(...fourHour.map(c => c.low)), '4H_LOW');
+    }
+    if (oneHour?.length) {
+      appendLevel(Math.max(...oneHour.map(c => c.high)), '1H_HIGH');
+      appendLevel(Math.min(...oneHour.map(c => c.low)), '1H_LOW');
+    }
+
+    const unique = [];
+    levels.forEach(level => {
+      const exists = unique.some(item => Math.abs(item.price - level.price) < currentPrice * 0.0005);
+      if (!exists) unique.push(level);
+    });
+
+    return unique.slice(0, 10);
+  }
+
+  buildTimeframeBias(multiTimeframeData = {}) {
+    const derive = (candles) => {
+      if (!candles || candles.length < 2) return 'NEUTRAL';
+      const first = candles[0].close;
+      const last = candles[candles.length - 1].close;
+      const change = (last - first) / (first || 1);
+      if (change > 0.005) return 'BULLISH';
+      if (change < -0.005) return 'BEARISH';
+      return 'NEUTRAL';
+    };
+
+    return {
+      dailyBias: derive(multiTimeframeData.daily),
+      fourHourBias: derive(multiTimeframeData.fourHour),
+      oneHourBias: derive(multiTimeframeData.oneHour)
+    };
+  }
+
+  detectLocalImbalances(candles) {
+    if (!candles || candles.length < 5) return [];
+    const recent = candles.slice(-5);
+    return recent
+      .map(c => ({
+        price: c.close,
+        type: c.close > c.open ? 'BUY' : c.close < c.open ? 'SELL' : 'NEUTRAL',
+        timeframe: 'CURRENT'
+      }))
+      .filter(entry => entry.type !== 'NEUTRAL');
+  }
+
+  calculateSMA(values, period) {
+    if (!values || values.length < period) return null;
+    const slice = values.slice(-period);
+    const sum = slice.reduce((acc, value) => acc + value, 0);
+    return sum / period;
+  }
+
+  calculateSlope(values, period) {
+    if (!values || values.length < period) return 0;
+    const slice = values.slice(-period);
+    const first = slice[0];
+    const last = slice[slice.length - 1];
+    return (last - first) / period;
+  }
+
+  calculateATR(candles, period = 14) {
+    if (!candles || candles.length < 2) return 0;
+    const trs = [];
+    for (let i = 1; i < candles.length; i++) {
+      const current = candles[i];
+      const prev = candles[i - 1];
+      const highLow = current.high - current.low;
+      const highClose = Math.abs(current.high - prev.close);
+      const lowClose = Math.abs(current.low - prev.close);
+      trs.push(Math.max(highLow, highClose, lowClose));
+    }
+
+    if (!trs.length) return 0;
+
+    const relevant = trs.slice(-period);
+    const sum = relevant.reduce((acc, tr) => acc + tr, 0);
+    return sum / relevant.length;
+  }
+
+  calculateRSI(values, period = 14) {
+    if (!values || values.length < period + 1) return 50;
+    let gains = 0;
+    let losses = 0;
+    for (let i = values.length - period; i < values.length; i++) {
+      const diff = values[i] - values[i - 1];
+      if (diff >= 0) gains += diff;
+      else losses -= diff;
+    }
+    const avgGain = gains / period;
+    const avgLoss = losses / period;
+    if (avgLoss === 0) return 70;
+    const rs = avgGain / avgLoss;
+    return 100 - 100 / (1 + rs);
+  }
+
+  deriveTrendBias(candles) {
+    if (!candles || candles.length < 2) return 'NEUTRAL';
+    const first = candles[0].close;
+    const last = candles[candles.length - 1].close;
+    if (last > first * 1.01) return 'UP';
+    if (last < first * 0.99) return 'DOWN';
+    return 'NEUTRAL';
   }
 
   /**
