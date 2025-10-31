@@ -78,22 +78,22 @@ const AISentimentMeter = () => {
   };
 
   return (
-    <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-xl p-6 shadow-2xl border border-gray-700">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-          <span className="text-3xl">🎯</span>
+    <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-xl p-4 shadow-xl border border-gray-700">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+          <span className="text-2xl">🎯</span>
           AI Sentiment
         </h2>
         {isAnalyzing && (
-          <div className="flex items-center gap-2 bg-blue-500 bg-opacity-20 px-3 py-1.5 rounded-full">
-            <div className="animate-spin h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full"></div>
-            <span className="text-blue-400 text-xs font-semibold">Live</span>
+          <div className="flex items-center gap-2 bg-blue-500 bg-opacity-20 px-2.5 py-1 rounded-full">
+            <div className="animate-spin h-2.5 w-2.5 border-2 border-blue-400 border-t-transparent rounded-full"></div>
+            <span className="text-blue-400 text-[10px] font-semibold uppercase tracking-wide">Live</span>
           </div>
         )}
       </div>
 
       {/* Enhanced Gauge Container */}
-      <div className="relative w-full h-56 flex items-center justify-center mb-6">
+      <div className="relative w-full h-44 flex items-center justify-center mb-4">
         {/* Glow effect behind gauge */}
         <div 
           className="absolute w-full h-full rounded-full opacity-30 blur-2xl transition-colors duration-1000"
@@ -226,21 +226,21 @@ const AISentimentMeter = () => {
       </div>
 
       {/* Sentiment Value Display - Enhanced */}
-      <div className="text-center mt-6">
-        <div 
-          className="text-4xl font-black mb-2 transition-all duration-500 drop-shadow-lg"
+      <div className="text-center mt-4">
+        <div
+          className="text-2xl font-bold mb-1 transition-all duration-500 drop-shadow"
           style={{ color: getColor() }}
         >
           {getSentimentLabel()}
         </div>
-        <div className="flex items-center justify-center gap-4 text-sm">
-          <div className="bg-gray-700 bg-opacity-50 px-4 py-2 rounded-lg">
+        <div className="flex items-center justify-center gap-3 text-xs">
+          <div className="bg-gray-700 bg-opacity-50 px-3 py-1.5 rounded-lg">
             <span className="text-gray-400">Score:</span>
-            <span className="ml-2 font-bold" style={{ color: getColor() }}>
+            <span className="ml-2 font-semibold" style={{ color: getColor() }}>
               {smoothedSentiment.toFixed(1)}
             </span>
           </div>
-          <div className="bg-gray-700 bg-opacity-50 px-4 py-2 rounded-lg">
+          <div className="bg-gray-700 bg-opacity-50 px-3 py-1.5 rounded-lg">
             <span className="text-gray-400">Range:</span>
             <span className="ml-2 text-white font-medium">-100 to +100</span>
           </div>
@@ -248,9 +248,9 @@ const AISentimentMeter = () => {
       </div>
 
       {/* Breakdown - Enhanced with better styling */}
-      <div className="mt-6 space-y-3">
-        <div className="flex items-center justify-between bg-gray-700 bg-opacity-30 p-3 rounded-lg hover:bg-opacity-50 transition-all">
-          <span className="text-gray-400 text-sm font-medium">📊 Market Trend:</span>
+      <div className="mt-4 space-y-2.5">
+        <div className="flex items-center justify-between bg-gray-700 bg-opacity-30 p-2.5 rounded-lg hover:bg-opacity-50 transition-all">
+          <span className="text-gray-400 text-xs font-medium">📊 Market Trend:</span>
           <span className={`font-medium ${
             marketState?.trend === 'UP' ? 'text-green-400' :
             marketState?.trend === 'DOWN' ? 'text-red-400' :
@@ -259,8 +259,8 @@ const AISentimentMeter = () => {
             {marketState?.trend || 'N/A'}
           </span>
         </div>
-        <div className="flex items-center justify-between bg-gray-700 bg-opacity-30 p-3 rounded-lg hover:bg-opacity-50 transition-all">
-          <span className="text-gray-400 text-sm font-medium">💹 Order Flow:</span>
+        <div className="flex items-center justify-between bg-gray-700 bg-opacity-30 p-2.5 rounded-lg hover:bg-opacity-50 transition-all">
+          <span className="text-gray-400 text-xs font-medium">💹 Order Flow:</span>
           <span className={`font-medium ${
             orderFlowData?.aggression === 'BULL' ? 'text-green-400' :
             orderFlowData?.aggression === 'BEAR' ? 'text-red-400' :
@@ -269,8 +269,8 @@ const AISentimentMeter = () => {
             {orderFlowData?.aggression || 'N/A'}
           </span>
         </div>
-        <div className="flex items-center justify-between bg-gray-700 bg-opacity-30 p-3 rounded-lg hover:bg-opacity-50 transition-all">
-          <span className="text-gray-400 text-sm font-medium">🎯 Signal:</span>
+        <div className="flex items-center justify-between bg-gray-700 bg-opacity-30 p-2.5 rounded-lg hover:bg-opacity-50 transition-all">
+          <span className="text-gray-400 text-xs font-medium">🎯 Signal:</span>
           <span className={`font-medium ${
             currentSignal?.type === 'LONG' ? 'text-green-400' :
             currentSignal?.type === 'SHORT' ? 'text-red-400' :
@@ -280,9 +280,9 @@ const AISentimentMeter = () => {
           </span>
         </div>
         {currentSignal && currentSignal.type !== 'FLAT' && (
-          <div className="flex items-center justify-between bg-gray-700 bg-opacity-30 p-3 rounded-lg hover:bg-opacity-50 transition-all">
-            <span className="text-gray-400 text-sm font-medium">✨ Confidence:</span>
-            <span className="text-white font-medium">
+          <div className="flex items-center justify-between bg-gray-700 bg-opacity-30 p-2.5 rounded-lg hover:bg-opacity-50 transition-all">
+            <span className="text-gray-400 text-xs font-medium">✨ Confidence:</span>
+            <span className="text-white text-sm font-medium">
               {currentSignal.confidence}%
             </span>
           </div>

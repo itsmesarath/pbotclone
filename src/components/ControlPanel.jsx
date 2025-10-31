@@ -92,7 +92,7 @@ const SYMBOLS = [
   'DOTUSDT'
 ];
 
-const ControlPanel = () => {
+const ControlPanel = ({ collapsed = false, onToggleCollapse = () => {} }) => {
   const {
     symbol,
     interval,
@@ -136,9 +136,38 @@ const ControlPanel = () => {
   const requiresGroq = selectedModelInfo?.api === 'groq';
   const hasRequiredKey = requiresGroq ? groqApiKey : openRouterApiKey;
 
+  if (collapsed) {
+    return (
+      <div className="bg-gray-800 rounded-lg p-4 space-y-4 border border-gray-700">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">Control Panel</h2>
+          <button
+            onClick={onToggleCollapse}
+            className="text-xs uppercase tracking-wide text-blue-300 hover:text-blue-200"
+          >
+            Expand
+          </button>
+        </div>
+        <div className="space-y-1 text-sm text-gray-300">
+          <p className="flex justify-between"><span>Pair</span><span>{symbol}</span></p>
+          <p className="flex justify-between"><span>Timeframe</span><span>{interval}</span></p>
+          <p className="flex justify-between"><span>AI</span><span>{aiEnabled ? 'Enabled' : 'Off'}</span></p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-gray-800 rounded-lg p-6 space-y-6">
-      <h2 className="text-xl font-bold text-white">Control Panel</h2>
+    <div className="bg-gray-800 rounded-lg p-6 space-y-6 border border-gray-700">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-white">Control Panel</h2>
+        <button
+          onClick={onToggleCollapse}
+          className="text-xs uppercase tracking-wide text-gray-300 hover:text-gray-100"
+        >
+          Collapse
+        </button>
+      </div>
 
       {/* Symbol Selection */}
       <div>

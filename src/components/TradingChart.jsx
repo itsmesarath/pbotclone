@@ -6,7 +6,13 @@ import {
   resolveTradingSymbol
 } from '../services/tradingViewService';
 
-const TradingChart = () => {
+const TradingChart = ({
+  isMaximized = false,
+  onToggleMaximize = () => {},
+  onCollapseControls = () => {},
+  areControlsCollapsed = false,
+  restoreControls = () => {}
+}) => {
   const containerId = useMemo(
     () => `tv_chart_${Math.random().toString(36).slice(2, 11)}`,
     []
@@ -203,11 +209,61 @@ const TradingChart = () => {
           allow_symbol_change: false,
           hide_side_toolbar: false,
           withdateranges: true,
+          toolbar_bg: '#1e222d',
+          studies: ['RSI@tv-basicstudies', 'MACD@tv-basicstudies', 'Volume@tv-basicstudies'],
+          enabled_features: [
+            'move_logo_to_main_pane',
+            'items_favoriting',
+            'show_hide_button_in_legend',
+            'header_compare',
+            'header_symbol_search',
+            'header_interval_dialog_button',
+            'header_resolutions',
+            'header_indicators',
+            'header_fullscreen_button',
+            'header_settings',
+            'header_saveload',
+            'chart_property_page_trading'
+          ],
+          disabled_features: ['use_localstorage_for_settings'],
+          drawings_access: {
+            type: 'black',
+            tools: [
+              { name: 'Trend Line' },
+              { name: 'Trend Angle' },
+              { name: 'Fib Retracement' },
+              { name: 'Rectangle' },
+              { name: 'Ellipse' },
+              { name: 'Brush' },
+              { name: 'Price Range' },
+              { name: 'Long Position' },
+              { name: 'Short Position' }
+            ]
+          },
+          favorites: {
+            intervals: ['1', '5', '15', '60', '240', '1D', '1W'],
+            chartTypes: ['candles', 'heikinashi'],
+            drawingTools: ['Trend Line', 'Fib Retracement', 'Price Range', 'Brush']
+          },
+          time_frames: [
+            { text: '1m', resolution: '1', description: 'Scalp' },
+            { text: '5m', resolution: '5', description: 'Intra-day' },
+            { text: '15m', resolution: '15', description: 'Momentum' },
+            { text: '1h', resolution: '60', description: 'Intraday Swing' },
+            { text: '4h', resolution: '240', description: 'Swing' },
+            { text: '1D', resolution: '1D', description: 'Daily' },
+            { text: '1W', resolution: '1W', description: 'Weekly' }
+          ],
           overrides: {
             'paneProperties.background': '#1e222d',
             'paneProperties.vertGridProperties.color': '#2a2e39',
             'paneProperties.horzGridProperties.color': '#2a2e39',
             'scalesProperties.textColor': '#d1d4dc'
+          },
+          studies_overrides: {
+            'volume.volume.color.0': '#ef4444',
+            'volume.volume.color.1': '#22c55e',
+            'volume.volume.transparency': 70
           },
           loading_screen: { backgroundColor: '#1e222d', foregroundColor: '#2962ff' }
         });
@@ -220,12 +276,10 @@ const TradingChart = () => {
 
           try {
             const chart = widgetRef.current.activeChart();
-            // Configure a couple of default indicators for a richer out-of-the-box chart
             chart.createStudy('Moving Average', false, false, [50]);
             chart.createStudy('Moving Average', false, false, [200]);
-            chart.createStudy('Volume', false, true);
           } catch (err) {
-            console.warn('Unable to configure default TradingView studies', err);
+            console.warn('Unable to configure default TradingView moving averages', err);
           }
 
           applyKeyLevels();
@@ -292,8 +346,34 @@ const TradingChart = () => {
     applySignalAnnotations();
   }, [applySignalAnnotations]);
 
+  useEffect(() => {
+    if (chartReadyRef.current && widgetRef.current) {
+      try {
+        widgetRef.current.resize();
+      } catch (err) {
+        console.warn('Unable to resize TradingView widget', err);
+      }
+    }
+  }, [isMaximized]);
+
+  const chartHeight = isMaximized ? '80vh' : '600px';
+
   return (
-    <div className="relative bg-gray-800 rounded-lg">
+    <div className={`relative bg-gray-800 rounded-lg border border-gray-700 ${isMaximized ? 'shadow-2xl' : ''}`}>
+      <div className="absolute top-3 right-3 z-30 flex flex-wrap gap-2">
+        <button
+          onClick={onToggleMaximize}
+          className="rounded-md bg-gray-900/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-gray-200 hover:bg-gray-900"
+        >
+          {isMaximized ? 'Exit Full View' : 'Maximise Chart'}
+        </button>
+        <button
+          onClick={areControlsCollapsed ? restoreControls : onCollapseControls}
+          className="rounded-md bg-gray-900/60 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-gray-200 hover:bg-gray-900"
+        >
+          {areControlsCollapsed ? 'Show Controls' : 'Hide Controls'}
+        </button>
+      </div>
       {isLoading && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gray-900/80 rounded-lg">
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
@@ -310,7 +390,7 @@ const TradingChart = () => {
         </div>
       )}
 
-      <div id={containerId} style={{ height: '600px' }} />
+      <div id={containerId} style={{ height: chartHeight }} />
     </div>
   );
 };
