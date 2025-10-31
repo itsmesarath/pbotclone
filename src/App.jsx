@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import TradingChart from './components/TradingChart';
 import ControlPanel from './components/ControlPanel';
 import Dashboard from './components/Dashboard';
@@ -12,6 +12,8 @@ function App() {
   useTradingBot();
 
   const { showSentimentMeter } = useTradingStore();
+  const [isControlPanelCollapsed, setIsControlPanelCollapsed] = useState(false);
+  const [isChartMaximized, setIsChartMaximized] = useState(false);
 
   return (
     <div className="min-h-screen bg-gray-900 p-4">
@@ -34,21 +36,44 @@ function App() {
       {/* Main Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Left Sidebar - Controls */}
-        <div className="lg:col-span-3 space-y-4">
-          <ControlPanel />
-        </div>
+        {!isChartMaximized && (
+          <div
+            className={`${
+              isControlPanelCollapsed ? 'lg:col-span-1' : 'lg:col-span-3'
+            } space-y-4`}
+          >
+            <ControlPanel
+              collapsed={isControlPanelCollapsed}
+              onToggleCollapse={() =>
+                setIsControlPanelCollapsed((prev) => !prev)
+              }
+            />
+          </div>
+        )}
 
         {/* Center - Chart */}
-        <div className="lg:col-span-6">
-          <TradingChart />
+        <div
+          className={`${
+            isChartMaximized ? 'lg:col-span-12' : 'lg:col-span-6'
+          }`}
+        >
+          <TradingChart
+            isMaximized={isChartMaximized}
+            onToggleMaximize={() => setIsChartMaximized((prev) => !prev)}
+            onCollapseControls={() => setIsControlPanelCollapsed(true)}
+            areControlsCollapsed={isControlPanelCollapsed}
+            restoreControls={() => setIsControlPanelCollapsed(false)}
+          />
         </div>
 
         {/* Right Sidebar - AI Sentiment & Signals & Dashboard */}
-        <div className="lg:col-span-3 space-y-4">
-          {showSentimentMeter && <AISentimentMeter />}
-          <SignalPanel />
-          <Dashboard />
-        </div>
+        {!isChartMaximized && (
+          <div className="lg:col-span-3 space-y-4">
+            {showSentimentMeter && <AISentimentMeter />}
+            <SignalPanel />
+            <Dashboard />
+          </div>
+        )}
       </div>
 
       {/* Footer */}
