@@ -58,6 +58,41 @@ The bot implements three-pillar analysis:
 4. **Open your browser**:
    Navigate to `http://localhost:3000`
 
+## 📦 Exporting to a New Repository
+
+Use the helper script to snapshot the current project into a brand-new git repository (useful when you want to publish or share your personalized build). You can let the script choose a timestamped export directory for you:
+
+```bash
+scripts/save-to-new-repo.sh
+```
+
+Or provide a custom destination (parent directories will be created automatically):
+
+```bash
+scripts/save-to-new-repo.sh ../fabio-new
+```
+
+Need to wire the export straight to a remote repository (e.g., GitHub)? Pass the URL as the second argument and the script will add it as `origin`:
+
+```bash
+scripts/save-to-new-repo.sh ../fabio-new https://github.com/itsmesarath/sentimentai2.git
+```
+
+Prefer npm scripts? Run:
+
+```bash
+npm run export:new-repo -- ../fabio-new
+```
+
+The script will:
+
+- Create the destination directory if it does not exist yet (or a timestamped one in `../exports/` when none is provided).
+- Copy the current `HEAD` sources into that directory using `git archive`.
+- Initialize a new git repository, create a `main` branch, and perform the initial commit for you.
+- Optionally add a remote named `origin` when you supply a repository URL as the second argument.
+
+After it finishes you can `cd` into the new directory and push the freshly created repository (if you provided a remote the script prints the exact `git push` command to run).
+
 ## 🔑 Configuration
 
 ### Setting up OpenRouter API Key
